@@ -1,0 +1,4 @@
+/* Small custom styles */
+body { -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; }
+mark { padding: 0.1rem 0.15rem; border-radius: 0.2rem; }
+table tr:nth-child(even) td { background: #fbfbfd; }
