@@ -3,8 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>University Course Selector</title>
-    <!-- Load Tailwind CSS -->
+    <title>University Course Scheduler</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         /* Custom scrollbar for better look */
@@ -13,48 +12,62 @@
             height: 8px;
         }
         .custom-scroll::-webkit-scrollbar-thumb {
-            background-color: #a0aec0; /* Tailwind gray-400 */
+            background-color: #93c5fd; /* Tailwind blue-300 */
             border-radius: 4px;
         }
         .custom-scroll::-webkit-scrollbar-track {
             background-color: #f7fafc; /* Tailwind gray-50 */
         }
-        /* Specificity for horizontal scrollbar */
-        .overflow-x-auto.custom-scroll::-webkit-scrollbar {
-            height: 10px;
-        }
-
+        
         .section-card {
             transition: all 0.2s ease;
+            cursor: pointer;
+            border: 2px solid transparent; /* Ensure space for border */
         }
-        .section-card:hover {
+        .section-card:not(.selected):not(.conflict):hover {
             transform: translateY(-2px);
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.06);
+            border-color: #a5b4fc; /* Tailwind indigo-300 on hover */
         }
         .conflict {
-            border-color: #f56565 !important; /* Tailwind red-500 */
-            background-color: #fed7d7 !important; /* Tailwind red-200 */
+            border-color: #f87171 !important; /* Tailwind red-400 */
+            background-color: #fee2e2 !important; /* Tailwind red-100 */
+            animation: pulse-red 1s infinite alternate;
+        }
+        @keyframes pulse-red {
+            from { box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.7); }
+            to { box-shadow: 0 0 0 6px rgba(248, 113, 113, 0); }
         }
         .selected {
-            border-color: #48bb78 !important; /* Tailwind green-500 */
-            background-color: #c6f6d5 !important; /* Tailwind green-200 */
+            border-color: #34d399 !important; /* Tailwind emerald-400 */
+            background-color: #d1fae5 !important; /* Tailwind emerald-100 */
+            position: relative;
+        }
+        .selected::after {
+            content: '✓';
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            font-size: 1.5rem;
+            color: #065f46; /* Tailwind green-800 */
         }
         .course-selected {
-            background-color: #d1e5ff !important; /* Tailwind blue-100 */
-            border-color: #4299e1 !important; /* Tailwind blue-500 */
+            background-color: #e0f2fe !important; /* Tailwind sky-100 */
+            border-color: #38bdf8 !important; /* Tailwind sky-400 */
         }
-        /* Ensure the main container for courses to assign has enough height on small screens */
+        
+        /* Responsive adjustments for course selection view */
         @media (max-width: 1023px) {
             #assignment-course-list {
-                max-height: 150px;
+                max-height: 200px;
                 flex-wrap: wrap;
                 overflow-y: auto;
                 overflow-x: hidden;
-                gap: 0.75rem; /* Gap for wrapped items */
+                gap: 0.75rem;
                 padding-bottom: 0;
             }
-            .w-40 {
-                width: calc(50% - 0.75rem); /* Adjust width for 2-column wrapping on mobile */
+            .course-item-card {
+                width: calc(50% - 0.75rem);
                 flex-shrink: 0;
             }
         }
@@ -70,14 +83,521 @@
             }
         }
     </script>
+    <script type="module">
+        // --- Global State Management ---
+        
+        // Data derived from CSV
+        let allCoursesData = []; 
+        let uniqueCourses = {}; // {courseKey: [section1, section2, ...]}
+
+        // Application State
+        let selectedCoursesForAssignment = new Set(); // Keys of courses user wants to schedule (View 1)
+        let selectedSections = {}; // {courseKey: sectionData} - The actual schedule (View 2)
+
+        let viewState = 'courseSelection'; // 'courseSelection' or 'sectionAssignment'
+        let currentView2CourseKey = null; // Key of the course currently displayed in the Section list panel
+        
+        const LOCAL_STORAGE_KEY = 'courseSchedulerStateV1';
+
+        // --- Data Persistence (using localStorage) ---
+
+        /**
+         * Loads state from localStorage or initializes default state.
+         */
+        function loadStateFromLocalStorage() {
+            const storedState = localStorage.getItem(LOCAL_STORAGE_KEY);
+            if (storedState) {
+                const state = JSON.parse(storedState);
+                
+                // Restore Sets and Objects correctly
+                selectedCoursesForAssignment = new Set(state.selectedCoursesForAssignment || []);
+                selectedSections = state.selectedSections || {};
+                viewState = state.viewState || 'courseSelection';
+                currentView2CourseKey = state.currentView2CourseKey || null;
+                
+                displayMessage('Schedule loaded from local storage.', 'info');
+            } else {
+                displayMessage('Starting new schedule.', 'info');
+            }
+        }
+
+        /**
+         * Saves current application state to localStorage.
+         */
+        function saveStateToLocalStorage() {
+            const stateToSave = {
+                selectedCoursesForAssignment: Array.from(selectedCoursesForAssignment),
+                selectedSections: selectedSections,
+                viewState: viewState,
+                currentView2CourseKey: currentView2CourseKey
+            };
+            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stateToSave));
+        }
+
+
+        // --- Utility Functions ---
+
+        /**
+         * Converts time string (e.g., '08:30:AM') to minutes from midnight.
+         * @param {string} timeStr - The time string.
+         * @returns {number} Minutes from midnight.
+         */
+        function timeToMinutes(timeStr) {
+            if (!timeStr || timeStr.trim() === ' - ') return -1;
+            // Handle time format like "HH:MM:PERIOD"
+            const parts = timeStr.trim().match(/(\d{1,2}):(\d{2}):(AM|PM)/);
+            if (!parts) return -1; 
+
+            let [, hoursStr, minutesStr, period] = parts;
+            let hours = parseInt(hoursStr, 10);
+            let minutes = parseInt(minutesStr, 10);
+
+            if (period === 'PM' && hours !== 12) {
+                hours += 12;
+            } else if (period === 'AM' && hours === 12) {
+                hours = 0; // Midnight (12:xx AM) is 0 hours
+            }
+            return hours * 60 + minutes;
+        }
+
+        /**
+         * Checks for time conflicts between the new course and the currently selected courses.
+         * @param {object} newCourse - The section object to check.
+         * @returns {string | null} Conflict message or null if no conflict.
+         */
+        const checkConflict = (newCourse) => {
+            const allScheduledSections = Object.values(selectedSections);
+
+            // Get the time slots for the new course
+            const newTimes = [];
+            if (newCourse.Day1 && newCourse.Time1 && newCourse.Time1.trim() !== ' - ') {
+                const [start, end] = newCourse.Time1.split(' - ').map(t => timeToMinutes(t));
+                newTimes.push({ day: newCourse.Day1, start, end, section: newCourse.Section });
+            }
+            if (newCourse.Day2 && newCourse.Time2 && newCourse.Time2.trim() !== ' - ') {
+                const [start, end] = newCourse.Time2.split(' - ').map(t => timeToMinutes(t));
+                newTimes.push({ day: newCourse.Day2, start, end, section: newCourse.Section });
+            }
+
+            for (const existingCourse of allScheduledSections) {
+                // Ignore conflicts with itself when checking an existing selection for visual feedback
+                if (existingCourse.id === newCourse.id) continue;
+
+                const existingTimes = [];
+                if (existingCourse.Day1 && existingCourse.Time1 && existingCourse.Time1.trim() !== ' - ') {
+                    const [start, end] = existingCourse.Time1.split(' - ').map(t => timeToMinutes(t));
+                    existingTimes.push({ day: existingCourse.Day1, start, end });
+                }
+                if (existingCourse.Day2 && existingCourse.Time2 && existingCourse.Time2.trim() !== ' - ') {
+                    const [start, end] = existingCourse.Time2.split(' - ').map(t => timeToMinutes(t));
+                    existingTimes.push({ day: existingCourse.Day2, start, end });
+                }
+
+                for (const newTime of newTimes) {
+                    for (const existingTime of existingTimes) {
+                        if (newTime.day === existingTime.day) {
+                            // Check for overlap: (StartA < EndB) and (EndA > StartB)
+                            if (newTime.start < existingTime.end && newTime.end > existingTime.start) {
+                                return `Conflict: ${newCourse.FormalCode} conflicts with ${existingCourse.FormalCode} on ${newTime.day}.`;
+                            }
+                        }
+                    }
+                }
+            }
+
+            return null; // No conflict
+        };
+
+        // --- Data Loading and Processing ---
+
+        async function fetchCourseData() {
+            try {
+                // Assuming 'course_offerings.csv' is available in the environment
+                const filename = 'course_offerings.csv';
+                const response = await fetch(filename);
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                const csvText = await response.text();
+                const lines = csvText.trim().split('\r\n');
+                
+                // Simple CSV parsing: split by comma, trim, handle case where headers are not uniform
+                const headers = lines[0].split(',').map(h => h.trim().replace('.', ''));
+                
+                const courses = [];
+                for (let i = 1; i < lines.length; i++) {
+                    const values = lines[i].split(',').map(v => v.trim());
+                    if (values.length !== headers.length) continue; 
+                    
+                    const course = {};
+                    headers.forEach((header, index) => {
+                        let value = values[index];
+                        if ((header === 'Time1' || header === 'Time2') && value === '') {
+                            value = ' - ';
+                        }
+                        course[header] = value;
+                    });
+                    // Create a unique ID for each section
+                    course.id = `${course.FormalCode}-${course.Section}`;
+                    courses.push(course);
+                }
+
+                allCoursesData = courses;
+                processCourseData();
+            } catch (error) {
+                console.error("Failed to fetch or parse CSV data:", error);
+                displayMessage('Error loading course data. Check console for details.', 'error');
+            }
+        }
+
+        function processCourseData() {
+            uniqueCourses = {};
+            
+            allCoursesData.forEach(course => {
+                const courseKey = `${course.FormalCode} - ${course.Title}`;
+                if (!uniqueCourses[courseKey]) {
+                    uniqueCourses[courseKey] = [];
+                }
+                uniqueCourses[courseKey].push(course);
+            });
+            // Sort sections by section name for better UX
+            Object.keys(uniqueCourses).forEach(key => {
+                uniqueCourses[key].sort((a, b) => a.Section.localeCompare(b.Section));
+            });
+        }
+
+        // --- State Manipulation Functions ---
+
+        /**
+         * Toggles a course's inclusion in the scheduling process (View 1 logic).
+         */
+        function toggleCourseSelection(courseKey) {
+            if (selectedCoursesForAssignment.has(courseKey)) {
+                selectedCoursesForAssignment.delete(courseKey);
+                // Also ensure any assigned section for this course is removed from the schedule
+                if (selectedSections[courseKey]) {
+                    delete selectedSections[courseKey];
+                    displayMessage(`Removed ${courseKey} and its section from the schedule.`, 'warning');
+                }
+            } else {
+                selectedCoursesForAssignment.add(courseKey);
+                displayMessage(`Selected ${courseKey} for scheduling.`, 'info');
+            }
+            saveStateToLocalStorage();
+            renderApp();
+        }
+
+        /**
+         * Selects or deselects a specific section for a course (View 2 logic).
+         */
+        function updateSectionSelection(courseKey, sectionData) {
+            const currentSelectedSection = selectedSections[courseKey];
+
+            if (currentSelectedSection && currentSelectedSection.id === sectionData.id) {
+                // Case 1: Deselecting the currently selected section
+                delete selectedSections[courseKey];
+                displayMessage(`Deselected section ${sectionData.Section} for ${sectionData.FormalCode}.`, 'warning');
+
+            } else {
+                // Case 2: Selecting a new section (check for conflicts)
+                const conflict = checkConflict(sectionData);
+                if (conflict) {
+                    displayMessage(conflict, 'error');
+                    return;
+                }
+                
+                // Case 3: Update/set the new section
+                selectedSections[courseKey] = sectionData;
+                displayMessage(`Selected section ${sectionData.Section} for ${sectionData.FormalCode}.`, 'success');
+            }
+            
+            saveStateToLocalStorage();
+            renderApp(); // Rerender both the course list (View 1) and section details (View 2)
+        }
+
+        // --- UI Rendering ---
+
+        /**
+         * The main render function, determines which view to show.
+         */
+        function renderApp() {
+            const container = document.getElementById('app-container');
+            if (allCoursesData.length === 0) return; // Wait for data
+
+            container.innerHTML = `
+                ${renderScheduleSummary()}
+                ${viewState === 'courseSelection' ? renderCourseSelectionView1() : renderSectionAssignmentView2()}
+            `;
+            attachEventListeners();
+        }
+
+        function renderScheduleSummary() {
+            const totalCredits = Object.values(selectedSections).reduce((sum, course) => sum + (parseFloat(course.Cr) || 0), 0);
+            const scheduledCourses = Object.values(selectedSections).length;
+
+            let summaryHtml = '<div class="flex flex-wrap gap-4 mb-6 p-4 bg-white rounded-xl shadow-lg border-t-4 border-indigo-500">';
+            
+            // Credits Card
+            summaryHtml += `
+                <div class="flex-1 min-w-[150px] p-4 bg-indigo-50 rounded-lg">
+                    <div class="text-sm font-medium text-indigo-600">Total Credits</div>
+                    <div class="text-3xl font-extrabold text-indigo-900">${totalCredits.toFixed(0)}</div>
+                </div>
+            `;
+            // Scheduled Courses Card
+            summaryHtml += `
+                <div class="flex-1 min-w-[150px] p-4 bg-emerald-50 rounded-lg">
+                    <div class="text-sm font-medium text-emerald-600">Scheduled Courses</div>
+                    <div class="text-3xl font-extrabold text-emerald-900">${scheduledCourses}</div>
+                </div>
+            `;
+            // View Toggle Button
+            const isSelectionView = viewState === 'courseSelection';
+            summaryHtml += `
+                <div class="flex-1 min-w-[150px] flex items-center justify-center p-4">
+                    <button id="toggle-view-button" data-view="${isSelectionView ? 'sectionAssignment' : 'courseSelection'}"
+                            class="w-full py-3 px-4 rounded-xl font-semibold text-white transition duration-200 shadow-md ${isSelectionView ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-emerald-600 hover:bg-emerald-700'}">
+                        ${isSelectionView ? 'Go to Section Assignment' : 'Back to Course Selection'}
+                    </button>
+                </div>
+            `;
+            
+            summaryHtml += '</div>';
+            return summaryHtml;
+        }
+
+        /**
+         * Renders the initial course selection view (View 1).
+         */
+        function renderCourseSelectionView1() {
+            const courseKeys = Object.keys(uniqueCourses).sort();
+            let html = `
+                <div class="bg-white rounded-xl shadow-2xl p-6">
+                    <h2 class="text-2xl font-bold text-gray-900 mb-4 border-b pb-2">Step 1: Select Courses to Schedule</h2>
+                    <p class="text-gray-600 mb-4">Click any course to toggle whether you want to include it in your schedule.</p>
+                    <div id="course-list-container" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 custom-scroll max-h-[70vh] overflow-y-auto pr-2">
+            `;
+
+            courseKeys.forEach(courseKey => {
+                const sections = uniqueCourses[courseKey];
+                const isSelected = selectedCoursesForAssignment.has(courseKey);
+                const firstSection = sections[0]; // Use first section for basic info
+                
+                html += `
+                    <div data-course-key="${courseKey}" 
+                         class="course-select-card course-item-card p-4 rounded-xl border-2 cursor-pointer transition-all duration-150 ${isSelected ? 'course-selected border-sky-400 shadow-md' : 'bg-gray-50 border-gray-200 hover:bg-gray-100'}"
+                         >
+                        <div class="font-bold text-lg">${firstSection.FormalCode}</div>
+                        <div class="text-sm text-gray-600 truncate mb-2" title="${firstSection.Title}">${firstSection.Title}</div>
+                        <div class="text-xs text-gray-500">${sections.length} sections</div>
+                        <div class="text-xs font-semibold ${isSelected ? 'text-sky-700' : 'text-gray-400'} mt-1">
+                            ${isSelected ? 'Selected' : 'Click to Select'}
+                        </div>
+                    </div>
+                `;
+            });
+
+            html += `</div></div>`;
+            return html;
+        }
+
+        /**
+         * Renders the section assignment and schedule review view (View 2).
+         */
+        function renderSectionAssignmentView2() {
+            const courseKeys = Array.from(selectedCoursesForAssignment).sort();
+            
+            if (courseKeys.length > 0 && !currentView2CourseKey) {
+                currentView2CourseKey = courseKeys[0];
+            } else if (courseKeys.length === 0) {
+                currentView2CourseKey = null; // Clear if no courses selected
+                return `
+                    <div class="bg-white rounded-xl shadow-2xl p-6 text-center text-xl text-gray-600">
+                        <p class="mb-4">No courses selected for scheduling.</p>
+                        <p>Please go back to "Course Selection" to pick courses first.</p>
+                    </div>
+                `;
+            }
+
+            const activeSections = uniqueCourses[currentView2CourseKey] || [];
+            const activeCourseData = activeSections[0] || {};
+            
+            let html = `
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    
+                    <!-- Left Panel: Assigned Courses List -->
+                    <div class="lg:col-span-1 bg-gray-50 rounded-xl shadow-xl p-4">
+                        <h3 class="text-xl font-bold text-gray-800 mb-3 border-b pb-2">Assigned Courses (${courseKeys.length})</h3>
+                        <div id="assignment-course-list" class="flex flex-col gap-2 custom-scroll max-h-[60vh] overflow-y-auto">
+            `;
+            
+            // Render selected courses for quick switching
+            courseKeys.forEach(courseKey => {
+                const courseInfo = uniqueCourses[courseKey][0];
+                const isCurrent = courseKey === currentView2CourseKey;
+                const selectedSection = selectedSections[courseKey];
+                const statusClass = selectedSection ? 'border-emerald-500 bg-emerald-50' : 'border-indigo-200 bg-white';
+                
+                html += `
+                    <div data-course-key="${courseKey}"
+                         class="switch-course-card p-3 rounded-lg border-2 cursor-pointer transition duration-150 ${statusClass} ${isCurrent ? 'ring-4 ring-indigo-300 shadow-md' : 'hover:bg-indigo-100'}"
+                    >
+                        <div class="font-semibold text-gray-900">${courseInfo.FormalCode}</div>
+                        <div class="text-xs text-gray-600 truncate">${courseInfo.Title}</div>
+                        <div class="text-xs ${selectedSection ? 'text-emerald-700 font-bold' : 'text-red-500'} mt-1">
+                            ${selectedSection ? `Section: ${selectedSection.Section}` : 'Needs Section'}
+                        </div>
+                    </div>
+                `;
+            });
+
+            html += `</div></div>`; // Close Left Panel
+
+            // Right Panel: Sections for Active Course
+            html += `
+                <div class="lg:col-span-2 bg-white rounded-xl shadow-2xl p-6">
+                    <h3 class="text-2xl font-extrabold text-indigo-900 mb-4 border-b pb-2">
+                        Sections for: ${activeCourseData.FormalCode || 'N/A'} - ${activeCourseData.Title || 'Select a Course'}
+                    </h3>
+                    <div class="text-sm text-gray-600 mb-4">Select a section below to add or update your schedule. Click again to remove.</div>
+
+                    <div id="sections-detail-list" class="grid grid-cols-1 md:grid-cols-2 gap-4 custom-scroll max-h-[55vh] overflow-y-auto pr-2">
+            `;
+
+            // Render all sections for the active course
+            activeSections.forEach(section => {
+                const courseKey = `${section.FormalCode} - ${section.Title}`;
+                const isSelected = selectedSections[courseKey] && selectedSections[courseKey].id === section.id;
+                const conflict = checkConflict(section);
+                
+                let cardClass = 'bg-white border-gray-200 shadow';
+                if (conflict && !isSelected) {
+                    cardClass = 'conflict shadow-lg';
+                } else if (isSelected) {
+                    cardClass = 'selected shadow-lg';
+                } else if (conflict && isSelected) {
+                     // If it's the selected course, but it now conflicts with a newly selected section in another course
+                    cardClass = 'selected conflict shadow-lg';
+                }
+
+                let timeInfo = `<span class="font-medium">${section.Day1}:</span> ${section.Time1}`;
+                if (section.Day2 && section.Day2.trim() !== ' - ' && section.Day2.trim() !== section.Day1.trim()) {
+                    timeInfo += `<br><span class="font-medium">${section.Day2}:</span> ${section.Time2}`;
+                }
+
+                // Pass the section data as a JSON string
+                const sectionDataJson = JSON.stringify(section).replace(/'/g, '&apos;');
+
+                html += `
+                    <div data-section-id="${section.id}" 
+                         data-course-key="${courseKey}"
+                         class="section-card p-4 rounded-xl border-2 transition-all duration-300 ${cardClass}"
+                         data-section-data='${sectionDataJson}'
+                    >
+                        <div class="flex justify-between items-center mb-2">
+                            <div class="text-xl font-bold text-gray-900">Section ${section.Section}</div>
+                            <div class="text-sm font-semibold text-indigo-600">${section.Cr} Cr</div>
+                        </div>
+                        <div class="text-sm text-gray-700 leading-snug">${timeInfo}</div>
+                        <div class="text-xs text-gray-500 mt-1">Instructor: ${section.Initial} (${section['Faculty Full Name']})</div>
+                        <div class="text-xs text-gray-500">Room: ${section.Room1} ${section.Room2.trim() !== '' && section.Room2.trim() !== section.Room1.trim() ? `| ${section.Room2}` : ''}</div>
+                        ${conflict && !isSelected ? `<p class="text-xs font-bold text-red-700 mt-2">CONFLICT with an existing course!</p>` : ''}
+                    </div>
+                `;
+            });
+
+            html += `</div></div></div>`; // Close Right Panel and Grid
+            return html;
+        }
+        
+        // --- Event Handlers and Listeners ---
+
+        function attachEventListeners() {
+            // 1. View Toggle Button
+            document.getElementById('toggle-view-button')?.addEventListener('click', (e) => {
+                const targetView = e.currentTarget.dataset.view;
+                viewState = targetView;
+                saveStateToLocalStorage();
+                renderApp();
+            });
+
+            // 2. Course Selection (View 1)
+            document.querySelectorAll('.course-select-card').forEach(card => {
+                card.addEventListener('click', (e) => {
+                    const courseKey = e.currentTarget.dataset.courseKey;
+                    toggleCourseSelection(courseKey);
+                });
+            });
+
+            // 3. Section Assignment (View 2 - Right Panel)
+            document.querySelectorAll('.section-card').forEach(card => {
+                card.addEventListener('click', (e) => {
+                    const sectionData = JSON.parse(e.currentTarget.dataset.sectionData.replace(/&apos;/g, "'"));
+                    const courseKey = e.currentTarget.dataset.courseKey;
+                    updateSectionSelection(courseKey, sectionData);
+                });
+            });
+
+            // 4. Course Switch (View 2 - Left Panel)
+            document.querySelectorAll('.switch-course-card').forEach(card => {
+                card.addEventListener('click', (e) => {
+                    const courseKey = e.currentTarget.dataset.courseKey;
+                    currentView2CourseKey = courseKey;
+                    saveStateToLocalStorage();
+                    renderApp(); // Rerender to show new section details
+                });
+            });
+        }
+        
+        // --- Message Box ---
+
+        function displayMessage(message, type) {
+            const messageBox = document.getElementById('message-box');
+            // Remove existing classes
+            messageBox.className = "opacity-0 transition-opacity duration-300 w-full md:w-auto";
+            messageBox.textContent = message;
+            
+            const baseClass = 'p-3 rounded-lg text-white font-medium mb-4';
+            const typeClass = type === 'success' ? 'bg-emerald-500' : (type === 'error' ? 'bg-red-500' : 'bg-blue-500');
+
+            // Apply classes and make it visible
+            setTimeout(() => {
+                messageBox.className = `${baseClass} ${typeClass} opacity-100 transition-opacity duration-300 w-full md:w-auto`;
+            }, 10); // Small delay to reset transition
+
+            // Hide after 4 seconds
+            setTimeout(() => {
+                messageBox.className = messageBox.className.replace('opacity-100', 'opacity-0');
+            }, 4000);
+        }
+
+        // --- Initial Load ---
+
+        window.onload = async () => {
+            // 1. Fetch and process course data
+            await fetchCourseData();
+            
+            // 2. Load previous state
+            loadStateFromLocalStorage();
+
+            // 3. Remove loading indicator and render the app
+            document.getElementById('loading-indicator').style.display = 'none';
+            renderApp();
+        };
+
+    </script>
 </head>
 <body class="bg-gray-50 min-h-screen font-sans antialiased p-4 sm:p-8">
 
     <div class="max-w-6xl mx-auto">
-        <header class="text-center mb-10">
+        <header class="text-center mb-8">
             <h1 class="text-4xl font-extrabold text-gray-900 mb-2">University Course Scheduler</h1>
-            <p class="text-gray-600">Plan your semester schedule with ease.</p>
+            <p class="text-gray-600">Plan your semester schedule with ease and conflict detection.</p>
         </header>
+        
+        <!-- User Info and Messages -->
+        <div class="mb-4 flex flex-col md:flex-row justify-end items-start md:items-center">
+            <!-- Message Box -->
+            <div id="message-box" class="opacity-0 transition-opacity duration-300 w-full md:w-auto" role="alert"></div>
+        </div>
 
         <!-- Dynamic View Container -->
         <div id="app-container">
@@ -88,855 +608,5 @@
             </div>
         </div>
     </div>
-
-    <script type="module">
-        // Global variables for data management
-        let allCoursesData = []; // All rows from the CSV
-        let uniqueCourses = []; // List of unique courses (Formal Code + Title)
-        let uniquePrograms = []; // List of unique programs for filtering (View 1)
-        
-        let selectedCoursesForAssignment = new Set(); // Course keys selected in View 1
-        let selectedSections = {}; // {courseKey: sectionData} - Selections made in View 2
-
-        let viewState = 'courseSelection'; // 'courseSelection' or 'sectionAssignment'
-        let currentView2CourseKey = null; // Key of the course currently displayed in the Section list panel
-        let currentFilters = { faculty: [], time: [] }; // Stores multi-select filter state for View 2
-
-        // --- Time Slot Configuration ---
-        const THEORY_SLOTS = [
-            "08:30:AM - 09:50:AM",
-            "09:51:AM - 11:10:AM",
-            "11:11:AM - 12:30:PM",
-            "12:31:PM - 01:50:PM",
-            "01:51:PM - 03:10:PM",
-            "03:11:PM - 04:30:PM"
-        ];
-
-        const LAB_SLOTS = [
-            "08:30:AM - 11:00:AM",
-            "11:11:AM - 01:40:PM",
-            "02:00:PM - 04:30:PM"
-        ];
-        
-        // Combine and unique time slots for filter generation
-        const ALL_UNIQUE_TIME_SLOTS = [...new Set([...THEORY_SLOTS, ...LAB_SLOTS])].sort();
-
-        // --- Utility Functions for Time & Conflict Checking (Unchanged) ---
-
-        /** Parses time string into minutes from midnight. */
-        function timeToMinutes(timeStr) {
-            if (!timeStr) return -1;
-            const parts = timeStr.match(/(\d+):(\d+):([AP]M)/i);
-            if (!parts) return -1;
-
-            let hour = parseInt(parts[1], 10);
-            const minute = parseInt(parts[2], 10);
-            const ampm = parts[3].toUpperCase();
-
-            if (ampm === 'PM' && hour !== 12) {
-                hour += 12;
-            } else if (ampm === 'AM' && hour === 12) {
-                hour = 0; // 12:XX AM is 0 hour
-            }
-
-            return (hour * 60) + minute;
-        }
-
-        /** Parses a time slot string (e.g., "08:30:AM - 09:50:AM") into start and end minutes. */
-        function parseTimeRange(timeSlot) {
-            if (!timeSlot || timeSlot.trim() === '-') return { start: -1, end: -1 };
-            const [startTimeStr, endTimeStr] = timeSlot.split(' - ').map(s => s.trim());
-            return {
-                start: timeToMinutes(startTimeStr),
-                end: timeToMinutes(endTimeStr)
-            };
-        }
-
-        /** Checks if two time intervals on the same day overlap. */
-        function checkOverlap(startA, endA, startB, endB) {
-            return startA < endB && endA > startB;
-        }
-
-        /** Converts a Time slot string into a schedule object. */
-        function parseScheduleSlot(day, timeSlot) {
-            const { start, end } = parseTimeRange(timeSlot);
-            if (start === -1 || end === -1 || !day) return [];
-
-            return [{ day, start, end }];
-        }
-
-        /** Gets all schedule slots for a given section data row. */
-        function getSectionSchedule(sectionData) {
-            let schedule = [];
-            schedule = schedule.concat(parseScheduleSlot(sectionData['Day1'], sectionData['Time1']));
-            schedule = schedule.concat(parseScheduleSlot(sectionData['Day2'], sectionData['Time2']));
-            return schedule;
-        }
-
-        /**
-         * Checks if adding a new section conflicts with any existing selected section.
-         */
-        function findConflict(newSectionData, currentSelections) {
-            const newSchedule = getSectionSchedule(newSectionData);
-            const newCourseKey = getCourseKey(newSectionData);
-
-            for (const key in currentSelections) {
-                const existingSectionData = currentSelections[key];
-                // Crucial: Skip checking against a selection from the *same* course (since it's a replacement)
-                if (key === newCourseKey) continue;
-
-                const existingSchedule = getSectionSchedule(existingSectionData);
-
-                for (const newSlot of newSchedule) {
-                    for (const existingSlot of existingSchedule) {
-                        if (newSlot.day === existingSlot.day) {
-                            if (checkOverlap(newSlot.start, newSlot.end, existingSlot.start, existingSlot.end)) {
-                                return existingSectionData; // Found a conflict
-                            }
-                        }
-                    }
-                }
-            }
-            return null; // No conflict found
-        }
-
-        /** Converts minutes (e.g., 510) back to HH:MM:AM/PM (e.g., 08:30:AM) for comparison. */
-        function timeSlotToString(minutes) {
-            if (minutes === -1) return '';
-            const totalMinutes = minutes % (24 * 60);
-            let hours = Math.floor(totalMinutes / 60);
-            const mins = totalMinutes % 60;
-            const ampm = hours >= 12 ? 'PM' : 'AM';
-
-            if (hours > 12) hours -= 12;
-            if (hours === 0) hours = 12; // Midnight case
-
-            const hourStr = String(hours).padStart(2, '0');
-            const minStr = String(mins).padStart(2, '0');
-            
-            return `${hourStr}:${minStr}:${ampm}`;
-        }
-
-
-        // --- Core Data & Rendering Functions ---
-
-        /** Parses CSV text into an array of objects. */
-        function parseCSV(csvText) {
-            const lines = csvText.trim().split('\n');
-            if (lines.length === 0) return [];
-
-            const headers = lines[0].split(',').map(h => h.trim());
-            const data = [];
-
-            for (let i = 1; i < lines.length; i++) {
-                const values = lines[i].split(',').map(v => v.trim());
-                if (values.length !== headers.length) continue;
-
-                const row = {};
-                headers.forEach((header, index) => {
-                    row[header] = values[index];
-                });
-                data.push(row);
-            }
-            return data;
-        }
-
-        /** Creates a unique key for a course based on its code and title. */
-        function getCourseKey(courseData) {
-            return `${courseData['Formal Code']}_${courseData['Title']}`;
-        }
-        
-        /** Fetches course data from the CSV file and initializes the application. */
-        async function initializeData() {
-            try {
-                // Fetch the CSV file from the same directory
-                const response = await fetch('course_offerings.csv');
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                const csvText = await response.text();
-                allCoursesData = parseCSV(csvText);
-
-                if (allCoursesData.length === 0) {
-                     document.getElementById('app-container').innerHTML = '<div class="p-10 text-center bg-red-100 border border-red-400 text-red-700 rounded-xl">Error: Could not load or parse course data. The CSV file might be empty or missing headers.</div>';
-                     return;
-                }
-
-                const uniqueCourseMap = new Map();
-                const programSet = new Set();
-                programSet.add('All Programs');
-
-                allCoursesData.forEach(row => {
-                    const key = getCourseKey(row);
-                    // Store one representative row for the course
-                    if (!uniqueCourseMap.has(key)) {
-                        uniqueCourseMap.set(key, {
-                            'Formal Code': row['Formal Code'],
-                            'Title': row['Title'],
-                            'Program': row['Program'],
-                            'Cr.': row['Cr.'],
-                            key: key
-                        });
-                        programSet.add(row['Program']);
-                    }
-                });
-
-                uniqueCourses = Array.from(uniqueCourseMap.values());
-                uniquePrograms = Array.from(programSet).sort();
-
-                // Start rendering the app after data is loaded and processed
-                renderApp();
-
-            } catch (error) {
-                console.error("Failed to fetch course data:", error);
-                document.getElementById('app-container').innerHTML = `<div class="p-10 text-center bg-red-100 border border-red-400 text-red-700 rounded-xl">Error loading data: ${error.message}. Make sure 'course_offerings.csv' is in the same directory.</div>`;
-            }
-        }
-
-
-        // --- View Management ---
-
-        /** Renders the entire application based on the current viewState. */
-        function renderApp() {
-            const container = document.getElementById('app-container');
-            container.innerHTML = ''; // Clear previous view (including loading indicator)
-
-            if (viewState === 'courseSelection') {
-                container.innerHTML = `
-                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                        <!-- 1. Course Selection Panel (Phase 1) -->
-                        <div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-lg h-full overflow-hidden">
-                            <h2 class="text-2xl font-bold text-gray-800 mb-4 border-b pb-2">1. Select Courses for Assignment</h2>
-
-                            <!-- Filtering and Search Controls -->
-                            <div class="flex flex-col sm:flex-row gap-4 mb-4">
-                                <input type="text" id="course-search" placeholder="Search by Code or Title..."
-                                    oninput="filterAndRenderCourses()"
-                                    class="flex-grow p-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500">
-
-                                <select id="program-filter" onchange="filterAndRenderCourses()"
-                                    class="p-2 border border-gray-300 rounded-lg bg-white focus:ring-indigo-500 focus:border-indigo-500">
-                                    <!-- Options populated by JS -->
-                                </select>
-                            </div>
-
-                            <div id="course-list-selection" class="space-y-3 h-[60vh] lg:h-[70vh] custom-scroll overflow-y-auto pr-2">
-                                <!-- Filtered course cards will be rendered here -->
-                            </div>
-                        </div>
-
-                        <!-- 2. Action Panel (Phase 1 Right) -->
-                        <div class="lg:col-span-1 bg-white p-6 rounded-xl shadow-lg h-full">
-                            <h2 class="text-2xl font-bold text-gray-800 mb-4 border-b pb-2">Selected Courses</h2>
-                            <div id="pre-selected-summary" class="space-y-3 h-[60vh] lg:h-[70vh] custom-scroll overflow-y-auto pr-2 mb-4">
-                                <p class="text-center text-gray-500">No courses selected yet.</p>
-                            </div>
-
-                            <button onclick="changeView('sectionAssignment')"
-                                class="w-full py-3 px-4 rounded-xl bg-indigo-600 text-white font-semibold shadow-md hover:bg-indigo-700 transition duration-150 disabled:bg-gray-400"
-                                id="go-to-assignment-btn" disabled>
-                                Go to Section Assignment (0)
-                            </button>
-                        </div>
-                    </div>
-                `;
-                populateProgramFilter();
-                filterAndRenderCourses();
-
-            } else if (viewState === 'sectionAssignment') {
-                container.innerHTML = `
-                    <div class="flex justify-start mb-6">
-                        <button onclick="changeView('courseSelection')"
-                            class="py-2 px-4 rounded-lg bg-gray-200 text-gray-800 font-semibold hover:bg-gray-300 transition duration-150 flex items-center">
-                            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
-                            Back to Course Selection
-                        </button>
-                    </div>
-
-                    <!-- 1. Assigned Courses List (Top, Full Width, Horizontal Scrollable) -->
-                    <div class="bg-white p-4 rounded-xl shadow-lg mb-8 overflow-hidden">
-                        <h2 class="text-xl font-bold text-gray-800 mb-3 border-b pb-2">1. Courses to Assign (Select a course to view sections)</h2>
-                        <div id="assignment-course-list" class="flex space-x-4 pb-2 custom-scroll overflow-x-auto">
-                            <!-- Horizontal course buttons will be rendered here -->
-                        </div>
-                    </div>
-
-                    <!-- Main Assignment Layout Grid (2 Columns below: 2/3 and 1/3 split) -->
-                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                        
-                        <!-- 2. Section Details Panel (Center, takes 2/3 space) -->
-                        <div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-lg h-full overflow-hidden">
-                            <h2 class="text-2xl font-bold text-gray-800 mb-4 border-b pb-2">2. Available Sections</h2>
-                            <div id="selected-course-info" class="mb-4 text-gray-700 font-semibold">
-                                Select a course above to view sections.
-                            </div>
-
-                            <!-- Filtering Controls -->
-                            <div id="section-filters" class="mb-4 p-3 bg-gray-50 rounded-xl border border-gray-200 hidden">
-                                <p class="font-semibold text-sm mb-2 text-gray-700">Filter Sections:</p>
-                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <!-- Faculty Filter -->
-                                    <div class="p-2 border border-gray-300 rounded-lg bg-white">
-                                        <label class="block text-xs font-semibold text-gray-600 mb-1">Faculty Filter (Multi-Select)</label>
-                                        <div id="faculty-filter-container" class="max-h-24 overflow-y-auto space-y-1">
-                                            <!-- Faculty checkboxes will be rendered here -->
-                                        </div>
-                                    </div>
-                                    
-                                    <!-- Time Slot Filter -->
-                                    <div class="p-2 border border-gray-300 rounded-lg bg-white">
-                                        <label class="block text-xs font-semibold text-gray-600 mb-1">Time Slot Filter (Multi-Select)</label>
-                                        <div id="time-filter-container" class="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto">
-                                            <!-- Time Slot checkboxes will be rendered here -->
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            <!-- END Filtering Controls -->
-
-                            <div id="section-list" class="space-y-4 h-[40vh] md:h-[50vh] custom-scroll overflow-y-auto pr-2">
-                                <!-- Section cards will be rendered here -->
-                            </div>
-                        </div>
-
-                        <!-- 3. Current Schedule Panel (Right, takes 1/3 space) -->
-                        <div class="lg:col-span-1 bg-white p-6 rounded-xl shadow-lg h-full overflow-hidden">
-                            <h2 class="text-2xl font-bold text-gray-800 mb-4 border-b pb-2 flex items-center justify-between">
-                                3. My Schedule
-                                <span id="total-credits" class="text-sm font-normal bg-blue-100 text-blue-800 px-3 py-1 rounded-full">Credits: 0</span>
-                            </h2>
-                            <div id="schedule-summary" class="space-y-4 h-[70vh] custom-scroll overflow-y-auto pr-2">
-                                <p class="text-center text-gray-500">Your selected sections will appear here.</p>
-                            </div>
-                            <div id="conflict-message" class="mt-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg hidden" role="alert">
-                                <p class="font-bold">TIME CONFLICT DETECTED!</p>
-                                <p class="text-sm">Please review your selections. You have overlapping class times.</p>
-                            </div>
-                        </div>
-                    </div>
-                `;
-                // Initial render for section assignment view
-                renderAssignmentCourseList();
-                renderScheduleSummary();
-                populateTimeSlotFilter(); // Static time slot filter initialization
-            }
-        }
-
-        /** Changes the view state and re-renders the app. */
-        window.changeView = function(newView) {
-            viewState = newView;
-            // Clear current filters when leaving View 2
-            if (newView === 'courseSelection') {
-                currentFilters = { faculty: [], time: [] };
-                currentView2CourseKey = null;
-            }
-            renderApp();
-        }
-
-
-        // --- View 1: Course Selection and Filtering (Unchanged Logic) ---
-
-        /** Populates the program filter dropdown. */
-        function populateProgramFilter() {
-            const filter = document.getElementById('program-filter');
-            if (!filter) return;
-            filter.innerHTML = uniquePrograms.map(program =>
-                `<option value="${program}">${program}</option>`
-            ).join('');
-            filter.value = 'All Programs'; // Default selection
-        }
-
-        /** Filters uniqueCourses based on search term and program selection. */
-        window.filterAndRenderCourses = function() {
-            const searchInput = document.getElementById('course-search');
-            const programFilter = document.getElementById('program-filter');
-
-            const searchTerm = searchInput ? searchInput.value.toLowerCase() : '';
-            const selectedProgram = programFilter ? programFilter.value : 'All Programs';
-
-            const filteredCourses = uniqueCourses.filter(course => {
-                const matchesSearch = course['Formal Code'].toLowerCase().includes(searchTerm) ||
-                                      course['Title'].toLowerCase().includes(searchTerm);
-
-                const matchesProgram = selectedProgram === 'All Programs' || course['Program'] === selectedProgram;
-
-                return matchesSearch && matchesProgram;
-            });
-
-            renderFilteredCourseList(filteredCourses);
-        }
-
-        /** Renders the list of filtered courses in View 1. */
-        function renderFilteredCourseList(courses) {
-            const listElement = document.getElementById('course-list-selection');
-            const summaryElement = document.getElementById('pre-selected-summary');
-            const goBtn = document.getElementById('go-to-assignment-btn');
-            if (!listElement || !summaryElement || !goBtn) return;
-
-            // Sort courses by Formal Code for clarity
-            courses.sort((a, b) => a['Formal Code'].localeCompare(b['Formal Code']));
-
-            listElement.innerHTML = '';
-            summaryElement.innerHTML = '';
-
-            let selectedCount = 0;
-
-            courses.forEach(course => {
-                const key = course.key;
-                const isSelected = selectedCoursesForAssignment.has(key);
-
-                // --- Render Course List Card ---
-                const card = document.createElement('div');
-                card.className = `w-full text-left p-3 rounded-xl border-2 cursor-pointer transition duration-150 ease-in-out flex justify-between items-center
-                                ${isSelected ? 'course-selected' : 'bg-white border-gray-200 hover:bg-gray-100'}`;
-                card.innerHTML = `
-                    <div>
-                        <div class="font-bold text-base text-gray-900">${course['Formal Code']} (${course['Cr.']} Cr.)</div>
-                        <div class="text-sm text-gray-600">${course['Title']}</div>
-                        <div class="text-xs font-medium text-indigo-500">${course['Program']}</div>
-                    </div>
-                `;
-
-                const checkbox = document.createElement('input');
-                checkbox.type = 'checkbox';
-                checkbox.checked = isSelected;
-                checkbox.className = 'w-5 h-5 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500';
-                checkbox.onclick = (e) => handleCourseToggle(key, e);
-
-                card.appendChild(checkbox);
-                listElement.appendChild(card);
-
-                // --- Render Pre-Selected Summary ---
-                if (isSelected) {
-                    selectedCount++;
-                    const summaryItem = document.createElement('div');
-                    summaryItem.className = 'p-3 rounded-lg bg-indigo-50 text-indigo-800 border border-indigo-200 text-sm font-semibold';
-                    summaryItem.textContent = `${course['Formal Code']} - ${course['Title']}`;
-                    summaryElement.appendChild(summaryItem);
-                }
-            });
-
-            if (selectedCount === 0) {
-                 summaryElement.innerHTML = '<p class="text-center text-gray-500">No courses selected yet.</p>';
-            }
-
-            // Update button state and text
-            goBtn.disabled = selectedCount === 0;
-            goBtn.textContent = `Go to Section Assignment (${selectedCount})`;
-        }
-
-        /** Handles course selection/deselection in View 1. */
-        function handleCourseToggle(courseKey, event) {
-            // Stop propagation to prevent card click event if we were using it
-            event.stopPropagation();
-
-            if (selectedCoursesForAssignment.has(courseKey)) {
-                selectedCoursesForAssignment.delete(courseKey);
-                // Also remove section assignment if user decides to drop the course entirely
-                delete selectedSections[courseKey];
-            } else {
-                selectedCoursesForAssignment.add(courseKey);
-            }
-
-            // Re-render the course list to update colors and the summary panel
-            filterAndRenderCourses();
-        }
-
-
-        // --- View 2: Section Assignment and Filtering (Unchanged Logic) ---
-
-        /** Updates the current filter state and re-renders sections. */
-        window.handleFilterChange = function(type, value, isChecked) {
-            // Update the array in currentFilters
-            if (isChecked) {
-                if (!currentFilters[type].includes(value)) {
-                    currentFilters[type].push(value);
-                }
-            } else {
-                currentFilters[type] = currentFilters[type].filter(v => v !== value);
-            }
-            
-            // Trigger the re-render of sections
-            filterAndRenderSections();
-        }
-
-        /** Renders the time slot checkboxes. */
-        function populateTimeSlotFilter() {
-            const container = document.getElementById('time-filter-container');
-            if (!container) return;
-
-            container.innerHTML = ''; // Clear previous content
-
-            ALL_UNIQUE_TIME_SLOTS.forEach(slot => {
-                const isSelected = currentFilters.time.includes(slot);
-                const div = document.createElement('div');
-                div.className = 'flex items-start';
-                div.innerHTML = `
-                    <input id="time-${slot.replace(/\s/g, '_')}" type="checkbox" value="${slot}" 
-                        ${isSelected ? 'checked' : ''}
-                        onchange="handleFilterChange('time', this.value, this.checked)"
-                        class="mt-1 h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500 cursor-pointer">
-                    <label for="time-${slot.replace(/\s/g, '_')}" class="ml-2 block text-xs text-gray-700 cursor-pointer">${slot}</label>
-                `;
-                container.appendChild(div);
-            });
-        }
-
-        /** Dynamically renders the Faculty checkboxes for the selected course. */
-        function populateFacultyFilter(courseKey) {
-            const container = document.getElementById('faculty-filter-container');
-            if (!container) return;
-
-            container.innerHTML = '';
-            
-            // 1. Get unique faculty for this specific course
-            const courseSections = allCoursesData.filter(row => getCourseKey(row) === courseKey);
-            const uniqueFaculty = {};
-
-            courseSections.forEach(row => {
-                const initial = row['Initial'];
-                if (initial) {
-                    uniqueFaculty[initial] = row['Faculty Full Name'];
-                }
-            });
-
-            const sortedInitials = Object.keys(uniqueFaculty).sort();
-
-            if (sortedInitials.length === 0) {
-                container.innerHTML = '<p class="text-xs text-gray-500">No faculty assigned.</p>';
-                // Reset faculty filter when changing course
-                currentFilters.faculty = [];
-                return;
-            }
-            
-            // 2. Render Checkboxes
-            sortedInitials.forEach(initial => {
-                const fullName = uniqueFaculty[initial];
-                const isSelected = currentFilters.faculty.includes(initial);
-                
-                const div = document.createElement('div');
-                div.className = 'flex items-center';
-                div.innerHTML = `
-                    <input id="faculty-${initial}" type="checkbox" value="${initial}"
-                        ${isSelected ? 'checked' : ''}
-                        onchange="handleFilterChange('faculty', this.value, this.checked)"
-                        class="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500 cursor-pointer">
-                    <label for="faculty-${initial}" class="ml-2 block text-sm text-gray-700 cursor-pointer truncate" title="${fullName}">${fullName} (${initial})</label>
-                `;
-                container.appendChild(div);
-            });
-        }
-
-        /** Helper to check if a course time slot matches any of the selected filter slots. */
-        function timeSlotMatchesFilter(sectionData, selectedTimeSlots) {
-            if (selectedTimeSlots.length === 0) return true; // No filter applied
-
-            const schedule = getSectionSchedule(sectionData);
-
-            for (const slot of schedule) {
-                if (slot.start !== -1 && slot.end !== -1) {
-                    const courseTimeRangeStr = `${timeSlotToString(slot.start)} - ${timeSlotToString(slot.end)}`;
-                    
-                    // The time slot needs to be an exact match to one of the predefined filter slots
-                    if (selectedTimeSlots.includes(courseTimeRangeStr)) {
-                        return true;
-                    }
-                }
-            }
-            
-            return false;
-        }
-
-        /** Filters and renders sections for the currently selected course in View 2. */
-        window.filterAndRenderSections = function() {
-            const listElement = document.getElementById('section-list');
-            const filterContainer = document.getElementById('section-filters');
-            const courseKey = currentView2CourseKey; // Use globally stored active key
-
-            if (!courseKey || !listElement || !filterContainer) {
-                listElement.innerHTML = '<p class="text-center text-gray-500 mt-4">Select a course to view available sections.</p>';
-                filterContainer.classList.add('hidden');
-                return;
-            }
-            
-            filterContainer.classList.remove('hidden');
-
-            // 1. Get all sections for the course
-            let filteredSections = allCoursesData.filter(row => getCourseKey(row) === courseKey);
-
-            // 2. Apply Filters
-
-            // Filter 1: Faculty (Multi-select by Initial)
-            const selectedFacultyInitials = currentFilters.faculty;
-            if (selectedFacultyInitials.length > 0) {
-                filteredSections = filteredSections.filter(section => 
-                    selectedFacultyInitials.includes(section.Initial)
-                );
-            }
-
-            // Filter 2: Time Slots (Multi-select by Time String)
-            const selectedTimeSlots = currentFilters.time;
-            if (selectedTimeSlots.length > 0) {
-                filteredSections = filteredSections.filter(section => 
-                    timeSlotMatchesFilter(section, selectedTimeSlots)
-                );
-            }
-
-            // 3. Render the filtered list
-            renderFilteredSectionList(filteredSections, courseKey);
-        }
-
-        /** Function to render the list of filtered sections into the center panel. */
-        function renderFilteredSectionList(sections, courseKey) {
-            const listElement = document.getElementById('section-list');
-            if (!listElement) return;
-
-            listElement.innerHTML = '';
-
-            if (sections.length === 0) {
-                listElement.innerHTML = '<p class="text-center text-gray-500 mt-4 p-4 border rounded-lg bg-yellow-50 border-yellow-300">No sections found matching the current filters.</p>';
-                return;
-            }
-
-            const currentCourse = uniqueCourses.find(c => c.key === courseKey);
-
-            sections.forEach(section => {
-                const sectionKey = `${courseKey}_${section['Section']}`;
-                const isSelected = selectedSections[courseKey] && selectedSections[courseKey]['Section'] === section['Section'];
-
-                // Conflict check logic
-                const conflictingSection = findConflict(section, selectedSections);
-                const hasConflict = !isSelected && conflictingSection !== null;
-
-                const card = document.createElement('div');
-                card.id = `section-card-${sectionKey}`;
-                
-                let cardClass = 'section-card p-4 rounded-xl border-2 cursor-pointer ';
-                if (isSelected) {
-                    cardClass += 'selected border-green-500';
-                } else if (hasConflict) {
-                    cardClass += 'conflict border-red-500';
-                } else {
-                    cardClass += 'bg-gray-50 border-gray-200 hover:border-indigo-300';
-                }
-                card.className = cardClass;
-
-                let conflictDetail = '';
-                if (hasConflict) {
-                    conflictDetail = `<p class="text-xs text-red-600 mt-2 font-semibold">
-                                        CONFLICT with: ${conflictingSection['Formal Code']} - ${conflictingSection['Section']}
-                                    </p>`;
-                }
-
-                card.innerHTML = `
-                    <div class="flex justify-between items-start mb-1">
-                        <span class="text-xl font-extrabold">${section['Section']}</span>
-                        <span class="text-sm font-semibold text-gray-600">${section['Cr.']} Cr.</span>
-                    </div>
-                    <div class="space-y-1 text-sm text-gray-700">
-                        <p><strong>Faculty:</strong> ${section['Faculty Full Name']} (${section['Initial']})</p>
-                        <p><strong>Time 1:</strong> ${section['Day1']}: ${section['Time1']} (${section['Room1']})</p>
-                        ${section['Day2'] && section['Time2'] && section['Day2'].trim() !== '' && section['Time2'].trim() !== '-' ?
-                            `<p><strong>Time 2:</strong> ${section['Day2']}: ${section['Time2']} (${section['Room2']})</p>`
-                            : ''}
-                    </div>
-                    ${conflictDetail}
-                `;
-
-                // Pass the course object for proper re-rendering of sections on click
-                card.addEventListener('click', () => handleSectionSelection(courseKey, section, currentCourse));
-                listElement.appendChild(card);
-            });
-        }
-
-        /**
-         * Sets up the filters and displays sections for a selected course in the center panel (View 2).
-         * @param {object} course - The unique course object.
-         */
-        window.displaySections = function(course) {
-            const courseKey = course.key;
-            
-            // If the user clicks a new course, we must reset the faculty filter as the options change.
-            if (currentView2CourseKey !== courseKey) {
-                currentFilters.faculty = []; 
-            }
-            
-            currentView2CourseKey = courseKey; // Set the active course
-
-            document.getElementById('section-filters').classList.remove('hidden');
-
-            document.getElementById('selected-course-info').innerHTML = `
-                <span class="text-indigo-600 font-bold">${course['Formal Code']}</span>: ${course['Title']}
-            `;
-            
-            // Populate dynamic faculty list based on new course
-            populateFacultyFilter(courseKey); 
-            // Re-render time filter to maintain state
-            populateTimeSlotFilter();
-
-            // Render the sections with the current filters
-            filterAndRenderSections();
-            
-            // Scroll to the top of the section list to show the content
-            document.getElementById('section-list').scrollTop = 0;
-        }
-
-        /**
-         * Handles the click event for section selection/deselection (View 2).
-         */
-        function handleSectionSelection(courseKey, sectionData, course) {
-            const isAlreadySelected = selectedSections[courseKey] && selectedSections[courseKey]['Section'] === sectionData['Section'];
-
-            if (isAlreadySelected) {
-                // Deselect the current section
-                delete selectedSections[courseKey];
-            } else {
-                // Select the new section (conflict checked in UI rendering)
-                selectedSections[courseKey] = sectionData;
-            }
-
-            // Re-render all necessary parts of the UI
-            renderScheduleSummary();
-            // Re-render sections for the current course to update selection/conflict states
-            filterAndRenderSections();
-            // Re-render the course list to update its colors
-            renderAssignmentCourseList();
-        }
-
-        /** Renders the list of courses chosen in View 1 (top panel of View 2). */
-        function renderAssignmentCourseList() {
-            const listElement = document.getElementById('assignment-course-list');
-            if (!listElement) return;
-
-            listElement.innerHTML = '';
-
-            // Filter uniqueCourses to only include those in selectedCoursesForAssignment
-            const coursesToAssign = uniqueCourses.filter(c => selectedCoursesForAssignment.has(c.key));
-
-            // Sort courses by Formal Code
-            coursesToAssign.sort((a, b) => a['Formal Code'].localeCompare(b['Formal Code']));
-
-            if (coursesToAssign.length === 0) {
-                 listElement.innerHTML = '<p class="text-center text-gray-500 py-4">No courses selected for assignment. Return to Course Selection view to choose courses.</p>';
-                 document.getElementById('selected-course-info').textContent = 'Please return to Course Selection view to choose courses.';
-                 document.getElementById('section-filters').classList.add('hidden');
-                 return;
-            }
-
-            coursesToAssign.forEach(course => {
-                const isSectionSelected = !!selectedSections[course.key];
-                const isActive = currentView2CourseKey === course.key;
-
-                const button = document.createElement('button');
-                // w-40 flex-shrink-0 for fixed horizontal size
-                button.className = `w-40 flex-shrink-0 text-left p-3 rounded-lg border-2 transition duration-150 ease-in-out 
-                                    ${isSectionSelected ? 'selected border-green-500' : 'bg-white border-gray-200 hover:bg-gray-100'}
-                                    ${isActive ? 'bg-indigo-100 border-indigo-500' : ''}`;
-                button.innerHTML = `
-                    <div class="font-bold text-base text-gray-900">${course['Formal Code']}</div>
-                    <div class="text-sm text-gray-600 truncate">${course['Title']}</div>
-                `;
-                button.addEventListener('click', () => {
-                    displaySections(course);
-                    // Update visual state of course list buttons for the active course
-                    document.querySelectorAll('#assignment-course-list button').forEach(btn => {
-                        btn.classList.remove('bg-indigo-100', 'border-indigo-500');
-                    });
-                    button.classList.add('bg-indigo-100', 'border-indigo-500');
-                });
-                listElement.appendChild(button);
-            });
-        }
-
-        /** Renders the summary of selected courses in the right panel (View 2). */
-        function renderScheduleSummary() {
-            const summaryElement = document.getElementById('schedule-summary');
-            const totalCreditsElement = document.getElementById('total-credits');
-            const conflictMessageElement = document.getElementById('conflict-message');
-
-            if (!summaryElement || !totalCreditsElement || !conflictMessageElement) return;
-
-            summaryElement.innerHTML = '';
-            let totalCredits = 0;
-            let hasGlobalConflict = false;
-
-            const selectedKeys = Object.keys(selectedSections);
-
-            if (selectedKeys.length === 0) {
-                summaryElement.innerHTML = '<p class="text-center text-gray-500">Your selected sections will appear here.</p>';
-            } else {
-                // Sort by Formal Code for readability in the schedule summary
-                const sortedSections = selectedKeys
-                    .map(key => selectedSections[key])
-                    .sort((a, b) => a['Formal Code'].localeCompare(b['Formal Code']));
-
-                sortedSections.forEach(section => {
-                    const courseKey = getCourseKey(section);
-                    const credit = parseInt(section['Cr.'] || '0', 10);
-                    totalCredits += credit;
-
-                    // Check if this specific selected section conflicts with any *other* selected section
-                    const conflictingSection = findConflict(section, selectedSections);
-                    const isConflicting = conflictingSection !== null;
-                    if (isConflicting) {
-                        hasGlobalConflict = true;
-                    }
-
-                    const card = document.createElement('div');
-                    card.className = `p-4 rounded-xl shadow-md border-2 
-                                    ${isConflicting ? 'border-red-500 bg-red-100' : 'border-green-500 bg-green-100'}`;
-
-                    let conflictText = '';
-                    if (isConflicting) {
-                        conflictText = `<p class="text-sm font-semibold text-red-700 mt-2">
-                                            CONFLICT with: ${conflictingSection['Formal Code']} - ${conflictingSection['Section']}
-                                        </p>`;
-                    }
-
-                    card.innerHTML = `
-                        <div class="flex justify-between items-start">
-                            <h3 class="font-bold text-lg">${section['Formal Code']} - ${section['Section']}</h3>
-                            <button onclick="deselectCourse('${courseKey}')" class="text-red-500 hover:text-red-700 transition" title="Remove Section">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                            </button>
-                        </div>
-                        <p class="text-sm text-gray-700">${section['Title']}</p>
-                        <div class="mt-2 text-xs">
-                            <!-- Using Faculty Full Name as requested -->
-                            <p><strong>Faculty:</strong> ${section['Faculty Full Name']}</p>
-                            <p><strong>Time 1:</strong> ${section['Day1']}: ${section['Time1']} / Room ${section['Room1']}</p>
-                            ${section['Day2'] && section['Time2'] && section['Day2'].trim() !== '' && section['Time2'].trim() !== '-' ?
-                                `<p><strong>Time 2:</strong> ${section['Day2']}: ${section['Time2']} / Room ${section['Room2']}</p>`
-                                : ''}
-                        </div>
-                        ${conflictText}
-                    `;
-                    summaryElement.appendChild(card);
-                });
-            }
-
-            totalCreditsElement.textContent = `Credits: ${totalCredits}`;
-            conflictMessageElement.style.display = hasGlobalConflict ? 'block' : 'none';
-
-            // If the user removes a section, update the assignment list colors
-            renderAssignmentCourseList();
-        }
-
-        /** Deselects a course section from the schedule (View 2). */
-        window.deselectCourse = function(courseKey) {
-            delete selectedSections[courseKey];
-            renderScheduleSummary();
-
-            // Re-render the section list if it was focused on the deselected course
-            if (currentView2CourseKey === courseKey) {
-                 const currentCourse = uniqueCourses.find(c => c.key === courseKey);
-                 if (currentCourse) filterAndRenderSections();
-            }
-        }
-
-        // Initialize the application when the DOM is fully loaded
-        document.addEventListener('DOMContentLoaded', initializeData);
-
-    </script>
 </body>
 </html>
