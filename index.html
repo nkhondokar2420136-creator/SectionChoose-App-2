@@ -1,12 +1,73 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Section Planner</title>
+    <!-- Tailwind via CDN (Play CDN for quick prototyping) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- PapaParse for CSV parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+    <link rel="stylesheet" href="style.css">
   </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
+  <body class="bg-slate-50 text-slate-900">
+    <div class="max-w-6xl mx-auto p-6">
+      <header class="mb-6">
+        <h1 class="text-3xl font-semibold">Section Planner</h1>
+        <p class="text-slate-600 mt-1">Filter and search course sections (loads from <code>public/course_offerings.csv</code>).</p>
+      </header>
+
+      <section class="bg-white p-4 rounded-lg shadow mb-6">
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <input id="search" class="border p-2 rounded" placeholder="Search (all columns) — try: CSE, Ishrat, 09:51" />
+          <select id="faculty" class="border p-2 rounded">
+            <option value="">— Any faculty —</option>
+          </select>
+          <select id="day" class="border p-2 rounded">
+            <option value="">— Any day —</option>
+            <option value="Sat">Sat</option>
+            <option value="Sun">Sun</option>
+            <option value="Tue">Tue</option>
+            <option value="Wed">Wed</option>
+            <option value="Mon">Mon</option>
+            <option value="Thu">Thu</option>
+            <option value="Fri">Fri</option>
+          </select>
+          <div class="flex gap-2">
+            <input id="timeFrom" type="time" class="border p-2 rounded w-full" />
+            <input id="timeTo" type="time" class="border p-2 rounded w-full" />
+          </div>
+        </div>
+        <div class="flex items-center gap-3 mt-3">
+          <button id="clear" class="bg-sky-600 text-white px-3 py-1 rounded shadow">Reset filters</button>
+          <div id="count" class="text-sm text-slate-600"></div>
+        </div>
+      </section>
+
+      <section class="bg-white p-4 rounded-lg shadow">
+        <div class="overflow-x-auto">
+          <table id="results" class="min-w-full text-left">
+            <thead>
+              <tr class="bg-slate-100 text-slate-700">
+                <th class="p-2">Course</th>
+                <th class="p-2">Section</th>
+                <th class="p-2">Days</th>
+                <th class="p-2">Times</th>
+                <th class="p-2">Room</th>
+                <th class="p-2">Faculty</th>
+                <th class="p-2">Cr</th>
+              </tr>
+            </thead>
+            <tbody id="tbody">
+              <tr><td class="p-4" colspan="7">Loading data…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <footer class="text-sm text-slate-500 mt-4">Built for Fall 2025 course list. Replace <code>course_offerings.csv</code> with your full file if needed.</footer>
+    </div>
+
+    <script src="script.js"></script>
   </body>
 </html>
