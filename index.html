@@ -697,7 +697,6 @@
                 const scheduleText = getSectionSchedule(section).map(slot => `${slot.day} ${timeSlotToString(slot.start)}-${timeSlotToString(slot.end)}`).join('; ');
                 const conflictInfo = isConflict ? 
                     `<span class="text-red-600 font-bold">CONFLICT with: ${getCourseKey(conflictSection).split('_')[0]} - ${conflictSection.Section}</span>` : 
-                    '<span class="text-green-600 font-bold">No Time Conflicts</span>';
 
 
                 const card = document.createElement('div');
@@ -922,6 +921,7 @@
 
 </body>
 </html>
+
 
 
 
