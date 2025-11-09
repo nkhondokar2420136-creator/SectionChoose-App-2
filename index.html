@@ -939,6 +939,30 @@
         document.addEventListener('DOMContentLoaded', initializeData);
 
     </script>
+    <script>
+document.addEventListener('DOMContentLoaded', function() {
+    const filterToggle = document.getElementById('filterToggle');
+    const filterContent = document.getElementById('filterContent');
+    const arrowIcon = document.getElementById('arrowIcon');
+    
+    // Add the click listener
+    filterToggle.addEventListener('click', function() {
+        
+        // 1. Toggle the 'hidden' class on the content
+        filterContent.classList.toggle('hidden');
+        
+        // 2. Change the arrow icon
+        if (filterContent.classList.contains('hidden')) {
+            // Content is now hidden: Arrow points right (closed)
+            arrowIcon.innerHTML = '▶';
+        } else {
+            // Content is now visible: Arrow points down (open)
+            arrowIcon.innerHTML = '▼';
+        }
+    });
+});
+</script>
 </body>
 
 </html>
+
