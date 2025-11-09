@@ -859,6 +859,7 @@
                         <button onclick="handleRemoveSection('${courseKey}')" class="text-xs text-red-500 hover:text-red-700 font-semibold ml-2">[X]</button>
                     </div>
                     <p class="text-xs text-gray-600 truncate">${courseMeta['Title']}</p>
+                    <p class="text-xs text-gray-600 truncate">${section['Faculty Full Name']}</p>
                     <p class="text-[10px] mt-1 ${conflict ? 'text-red-700 font-semibold' : 'text-green-600'}">${scheduleText}</p>
                 `;
                 summaryElement.appendChild(item);
@@ -922,6 +923,7 @@
 
 </body>
 </html>
+
 
 
 
