@@ -855,7 +855,7 @@
                 item.className = `p-3 rounded-lg border shadow-sm ${conflict ? 'bg-red-50 border-red-300' : 'bg-white border-gray-200'}`;
                 item.innerHTML = `
                     <div class="flex justify-between items-center">
-                        <div class="font-bold text-sm">${courseMeta['Formal Code']} - ${sectionData.Section} - ${section['Faculty Full Name']}</div>
+                        <div class="font-bold text-sm">${courseMeta['Formal Code']} - ${sectionData.Section}</div>
                         <button onclick="handleRemoveSection('${courseKey}')" class="text-xs text-red-500 hover:text-red-700 font-semibold ml-2">[X]</button>
                     </div>
                     <p class="text-xs text-gray-600 truncate">${courseMeta['Title']}</p>
@@ -922,6 +922,7 @@
 
 </body>
 </html>
+
 
 
 
