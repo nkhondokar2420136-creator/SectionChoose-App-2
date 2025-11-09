@@ -783,7 +783,7 @@
                     button.innerHTML = `
                         <div class="font-bold text-sm truncate">${course['Formal Code']}</div>
                         <div class="text-xs truncate">${course['Title']}</div>
-                        ${hasSection ? `<div class="text-xs mt-1 font-semibold text-right">${hasSection.Section} ${hasSection.Type}</div>` : ''}
+                        ${hasSection ? `<div class="text-xs mt-1 font-semibold text-right">${hasSection.Section}</div>` : ''}
                     `;
                     button.onclick = () => switchView2Course(key);
                     listElement.appendChild(button);
@@ -922,5 +922,6 @@
 
 </body>
 </html>
+
 
 
