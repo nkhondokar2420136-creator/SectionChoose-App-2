@@ -66,7 +66,7 @@
             transition: all 0.3s ease;
         }
         
-        /* --- NEW: Calendar Grid Styles --- */
+        /* --- NEW: Calendar Grid Styles (Compact) --- */
         .calendar-grid {
             display: grid;
             grid-template-columns: 60px repeat(4, 1fr); /* Time + Sat, Sun, Tue, Wed */
@@ -77,23 +77,23 @@
         .calendar-grid > div {
             border-right: 1px solid #e2e8f0;
             border-bottom: 1px solid #e2e8f0;
-            padding: 4px 8px;
+            padding: 1px 4px; /* Compact padding */
         }
         .calendar-header {
             background-color: #f7fafc; /* gray-50 */
             font-weight: 600;
             text-align: center;
-            padding: 8px 4px !important;
+            padding: 4px 4px !important; /* Compact padding */
             font-size: 0.875rem;
             position: sticky;
             top: 0;
             z-index: 10;
         }
         .calendar-time-cell {
-            font-size: 0.75rem;
+            font-size: 0.625rem; /* 10px */
             font-weight: 500;
             text-align: right;
-            padding-right: 8px !important;
+            padding: 1px 4px !important; /* Compact padding */
             color: #4a5568; /* gray-600 */
         }
         .calendar-class-cell {
@@ -104,8 +104,8 @@
             border-radius: 4px;
             margin: 1px;
             overflow: hidden;
-            font-size: 0.75rem;
-            line-height: 1.2;
+            font-size: 0.625rem; /* 10px */
+            line-height: 1.1; /* Compact line height */
             z-index: 5;
         }
         .calendar-class-cell strong {
@@ -535,7 +535,7 @@
                 // Run render functions for this view
                 renderAssignmentCourseList();
                 renderScheduleSummary();
-                // populateTimeSlotFilter(); // <-- REMOVED this line
+                // populateTimeSlotFilter(); // <-- This was correctly removed
                 
                 // <<< CALLS THE LISTENER SETUP FUNCTION >>>
                 setupFilterToggleListener(); 
@@ -1129,7 +1129,7 @@
             const days = ["Sat", "Sun", "Tue", "Wed"];
             const gridStartTime = 480; // 8:00 AM in minutes
             const gridEndTime = 1050; // 5:30 PM (1020 is 5:00, 1050 is 5:30)
-            const rowUnit = 10; // *** CHANGED: Use 10-minute increments for precision ***
+            const rowUnit = 10; // Use 10-minute increments for precision
             const rowCount = (gridEndTime - gridStartTime) / rowUnit; // 57 rows
             
             // 1. Create Header Row
@@ -1168,7 +1168,6 @@
 
                     const colStart = days.indexOf(slot.day) + 2; // +1 for index, +1 for time col
                     
-                    // *** CHANGED: Calculate row start/end based on 10-minute rowUnit ***
                     const rowStart = Math.floor((slot.start - gridStartTime) / rowUnit) + 2;
                     const rowEnd = Math.ceil((slot.end - gridStartTime) / rowUnit) + 2;
 
@@ -1182,10 +1181,12 @@
                         --row-end: ${rowEnd};
                     `;
                     
-                    // *** CHANGED: Updated card content ***
+                    // *** RE-ADDED Course Name and Faculty Name ***
                     cell.innerHTML = `
                         <strong>${courseMeta['Formal Code']} (${section.Section})</strong>
-                        <p class="text-xs text-gray-600">${timeSlotToString(slot.start)} - ${timeSlotToString(slot.end)}</p>
+                        <p class="text-xs text-gray-700 truncate">${courseMeta['Title']}</p>
+                        <p class="text-xs text-gray-500 truncate">${section['Faculty Full Name']}</p>
+                        <p class="text-xs text-gray-600 mt-1">${timeSlotToString(slot.start)} - ${timeSlotToString(slot.end)}</p>
                     `;
                     container.appendChild(cell);
                 });
